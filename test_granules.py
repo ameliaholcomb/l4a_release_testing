@@ -66,9 +66,9 @@ class TestGranule(unittest.TestCase):
         cls.seed = 42
         random.seed(cls.seed)
         # This is kinda hacky, but okay
-        try:
+        if LOCALFILES_DIR.exists():
             file_pairs = _get_files_local()
-        except FileNotFoundError:
+        else:
             file_pairs = _get_files_umd()
 
         # Get verbosity level (default to 1 if not available)

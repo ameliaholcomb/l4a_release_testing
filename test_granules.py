@@ -6,6 +6,7 @@ import pathlib
 import random
 import sys
 import unittest
+from typing import Dict, List
 
 from tools.granule import Granule
 from tools.granule_name import parse_granule_filename
@@ -59,6 +60,19 @@ def _get_columns(file_path: pathlib.Path):
             columns.append(line.strip())
     return columns
 
+def _get_grps_columns_dict(columns: List[str]) -> Dict[str, List[str]]:
+    """
+    Returns a dictionary of
+      group_name: [column_name, ...]
+    In other words, a list of all columns expected under each group.
+    Only intended to be used for ONE level of hierarchy (i.e., no nested groups)
+    """
+    grps = set([col.split("/")[0] for col in columns])
+    grp_columns_dict = {
+        grp: [col.split("/")[1] for col in columns if col.startswith(grp + "/")]
+        for grp in grps
+    }
+    return grp_columns_dict
 
 class TestGranule(unittest.TestCase):
     @classmethod
@@ -246,11 +260,8 @@ class TestGranule(unittest.TestCase):
     def test_all_ancillary_fields(self):
         ancillary = DATA_DICTIONARY_DIR / "product_dictionary_ancillary.txt"
         columns = _get_columns(ancillary)
-        grps = set([col.split("/")[0] for col in columns])
-        grp_columns_dict = {
-            grp: [col.split("/")[1] for col in columns if col.startswith(grp + "/")]
-            for grp in grps
-        }
+        grp_columns_dict = _get_grps_columns_dict(columns)
+        grps = grp_columns_dict.keys()
         columns = [col.split("/") for col in columns]
         for _, file in self.file_pairs:
             g = Granule(file, columns=["agbd"])
@@ -327,6 +338,38 @@ class TestGranule(unittest.TestCase):
         for col, count in all_granules_all_zero_cols.items():
             if count == len(self.file_pairs):
                 print(f"\nWARNING: column {col} is all zero in all granules.")
+        
+    def test_no_extra_beam_fields(self):
+        print("\nWARNING: Currently ignoring degrade_flag")
+        ignore = ["degrade_flag", "geolocation/degrade_flag"]
+        beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
+        columns = _get_columns(beam_data)
+        columns = [c for c in columns if c not in ignore]
+        grp_columns_dict = _get_grps_columns_dict(columns)
+        grps = grp_columns_dict.keys()
+        columns = [col.split("/") for col in columns]
+
+        for _, file in self.file_pairs:
+            f = h5py.File(file, "r")
+            for k in f.keys():
+                if k.startswith("BEAM"):
+                    beam_grps = set(f[k].keys())
+                    for ig in ignore:
+                        beam_grps.discard(ig)
+                    self.assertSetEqual(
+                        beam_grps,  # actual
+                        set(grps),  # documentation
+                        f"Groups in {k} of {file.name} do not match expected groups",
+                    )
+                    for grp in beam_grps:
+                        if not grp_columns_dict[grp]:
+                            # This is a top-level group with no subcolumns
+                            continue
+                        self.assertSetEqual(
+                            set(f[k][grp].keys()), # actual
+                            set(grp_columns_dict[grp]), # documentation
+                            f"Columns in group {grp} of {k} in {file.name} do not match expected columns",
+                        )
     
 
 

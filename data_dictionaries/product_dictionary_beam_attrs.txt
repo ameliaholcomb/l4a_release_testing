@@ -1,0 +1,12 @@
+esa_worldcover_version 	
+pft_grid_version
+pft_infilled_grid_version
+region_grid_version
+phenology_grid_version
+urban_grid_version 
+water_grid_version
+predictor_offset
+response_offset
+l2a_alg_count 
+max_nvar
+alpha

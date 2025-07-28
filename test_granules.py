@@ -19,6 +19,7 @@ V3FILES_DIR = pathlib.Path(
 )
 V2FILES_DIR = pathlib.Path("/gpfs/data1/vclgp/data/iss_gedi/soc/2022/132")
 
+
 TESTDIR = pathlib.Path(__file__).parent
 DATA_DICTIONARY_DIR = TESTDIR / "data_dictionaries"
 
@@ -48,10 +49,23 @@ def _get_files_umd():
     return list(zip(v2files, v3files))
 
 
+def _get_l2a_file_umd(v3file: pathlib.Path):
+    md = parse_granule_filename(v3file.name)
+    l2afile = list(
+        V2FILES_DIR.glob(f"GEDI02_A*{md.orbit}_{md.sub_orbit_granule}*_V003.h5")
+    )
+    if len(l2afile) != 1:
+        raise (
+            f"Expected exactly one L2A file for {v3file.name}, found {len(l2afile)}"
+        )
+    return l2afile[0]
+
+
 def _get_files_local():
     v3files = sorted(list(LOCALFILES_DIR.glob("*V003.h5")))
     v2files = sorted(list(LOCALFILES_DIR.glob("*V002.h5")))
     return list(zip(v2files, v3files))
+
 
 def _get_columns(file_path: pathlib.Path):
     columns = []
@@ -59,6 +73,7 @@ def _get_columns(file_path: pathlib.Path):
         for line in f:
             columns.append(line.strip())
     return columns
+
 
 def _get_grps_columns_dict(columns: List[str]) -> Dict[str, List[str]]:
     """
@@ -74,6 +89,9 @@ def _get_grps_columns_dict(columns: List[str]) -> Dict[str, List[str]]:
     }
     return grp_columns_dict
 
+
+
+
 class TestGranule(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -86,7 +104,7 @@ class TestGranule(unittest.TestCase):
             file_pairs = _get_files_umd()
 
         # Get verbosity level (default to 1 if not available)
-        cls.verbosity = getattr(sys.modules[__name__], "_verbosity", 1)
+        cls.verbosity = getattr(sys.modules[__name__], "_verbosity", 2)
 
         # Pick a random subset of file pairs for testing
         # cls.file_pairs = random.sample(file_pairs, k=5)
@@ -232,21 +250,91 @@ class TestGranule(unittest.TestCase):
                     max_fpair = (v2file.name, v3file.name)
                 n_tot = len(v2ps)
                 if self.verbosity >= 2:
-                    print(f"Differences: {n_diff/n_tot}")
+                    print(f"Differences: {n_diff / n_tot}")
                 self.assertLess(n_diff / n_tot, 0.004)
 
                 if self.verbosity >= 2:
                     pairs = set(zip(v2p, v3p))
                     print(pairs)
         if self.verbosity >= 2:
-            print(("Max differences in predict_stratum:"
-                   f"{max_n} between {max_fpair[0]} and {max_fpair[1]}"
-            ))
+            print(
+                (
+                    "Max differences in predict_stratum:"
+                    f"{max_n} between {max_fpair[0]} and {max_fpair[1]}"
+                )
+            )
 
     def test_quality_flag_logic(self):
-        pass
+        qf_columns = [
+            "land_cover_data/worldcover_class",
+            "land_cover_data/urban_proportion",
+            "l2a_quality_flag_rel3",
+            "predict_stratum",
+            "land_cover_data/leaf_off_flag",
+            "l4a_quality_flag_rel3",
+        ]
+
+        def get_98_only_models(ancillary):
+            idx = ancillary["model_data"]["rh_index"].apply(
+                lambda arr: arr[0] == 98 and sum(arr) == 98
+            )
+            return set(ancillary["model_data"]["predict_stratum"][idx])
 
 
+        def myqf_l4a(granule: Granule):
+            only_98_models = get_98_only_models(granule.ancillary)
+            is_98_only = granule.data["predict_stratum"].isin(only_98_models)
+
+            qf = (
+                (granule.data["l2a_quality_flag_rel3"] == 1)
+                & (granule.data["land_cover_data/urban_proportion"] < 50)
+                & (granule.data["land_cover_data/worldcover_class"] != 0)
+                & (granule.data["land_cover_data/worldcover_class"] != 80)
+                & (granule.data["predict_stratum"] != b"None")
+                & (
+                    (granule.data["land_cover_data/leaf_off_flag"] == 0)
+                    | (granule.data["land_cover_data/leaf_off_flag"] == 255)
+                    | (is_98_only)
+                )
+            )
+            return qf
+
+        def myqf_l2a(granule: Granule):
+            return granule.data["rh"].apply(lambda arr: arr[100] < 150)
+        
+        if self.verbosity >= 2:
+            print("As a reminder, the RH98-only models are:")
+            g = Granule(self.file_pairs[0][1], columns=["agbd"])
+            print(get_98_only_models(g.ancillary))
+
+        ### TEST STARTS HERE ###
+        print("WARNING: Currently accepting leaf_off_flag = 255 as valid")
+        for _, v3file in self.file_pairs:
+            if self.verbosity >= 2:
+                print(f"Testing quality flag logic for {v3file.name}")
+            l2a_file = _get_l2a_file_umd(v3file)
+
+            g = Granule(v3file, columns=qf_columns)
+            g_l2a = Granule(l2a_file, columns=["rh"])
+
+            myqfl4a_set = myqf_l4a(g)
+            myqfl2a_set = myqf_l2a(g_l2a)
+            myqf = myqfl4a_set & myqfl2a_set
+            qf_v3 = g.data["l4a_quality_flag_rel3"] == 1
+
+            diff = myqf != qf_v3
+            self.assertFalse(
+                diff.any(),
+                f"Quality flag logic mismatch in {v3file.name}."
+            )
+            # if self.verbosity >= 2:
+            #     print(
+            #         "MyQF (L4A) vs V3 QF:\n",
+            #         g.data[diff][["shot_number", "predict_stratum"]],
+            #     )
+            #     g.data[diff].to_csv(
+            #         "quality_flag_mismatch.csv", index=False
+            #     )
 
     def test_all_metadata_fields(self):
         md = DATA_DICTIONARY_DIR / "product_dictionary_metadata.txt"
@@ -256,7 +344,7 @@ class TestGranule(unittest.TestCase):
             for col in columns:
                 if col not in f.keys():
                     self.fail(f"Column {col} not found in {file.name}")
-    
+
     def test_all_ancillary_fields(self):
         ancillary = DATA_DICTIONARY_DIR / "product_dictionary_ancillary.txt"
         columns = _get_columns(ancillary)
@@ -269,14 +357,21 @@ class TestGranule(unittest.TestCase):
                 if grp not in g.ancillary.keys():
                     self.fail(f"Group {grp} not found in {file.name}")
                 if name not in g.ancillary[grp].columns:
-                    self.fail(f"Column {name} not found in group {grp} of {file.name}")
-            self.assertEqual(len(set(g.ancillary["model_data"]["predict_stratum"])), 35)
-            self.assertSetEqual(grps, set(g.ancillary.keys()),
-                              f"Ancillary groups in {file.name} do not match expected groups")
-        
+                    self.fail(
+                        f"Column {name} not found in group {grp} of {file.name}"
+                    )
+            self.assertEqual(
+                len(set(g.ancillary["model_data"]["predict_stratum"])), 35
+            )
+            self.assertSetEqual(
+                grps,
+                set(g.ancillary.keys()),
+                f"Ancillary groups in {file.name} do not match expected groups",
+            )
+
             for grp in grps:
                 self.assertSetEqual(
-                    set(g.ancillary[grp].columns), 
+                    set(g.ancillary[grp].columns),
                     set(grp_columns_dict[grp]),
                     f"Columns in group {grp} of {file.name} do not match expected columns",
                 )
@@ -285,7 +380,7 @@ class TestGranule(unittest.TestCase):
                         g.ancillary[grp][col].isnull().any(),
                         f"Column {col} in group {grp} of {file.name} contains null values",
                     )
-    
+
     def test_all_beam_attributes(self):
         beam_attrs = DATA_DICTIONARY_DIR / "product_dictionary_beam_attrs.txt"
         columns = _get_columns(beam_attrs)
@@ -312,8 +407,7 @@ class TestGranule(unittest.TestCase):
                         set(columns),
                         f"Attributes for {k} in {file.name} do not match expected columns",
                     )
-                
-    
+
     def test_all_beam_fields(self):
         omit = ["geolocation/degrade_flag", "land_cover_data/pft_class"]
         print("\nWARNING: Currently omitting the following fields:")
@@ -321,7 +415,7 @@ class TestGranule(unittest.TestCase):
         beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
         columns = _get_columns(beam_data)
         columns = [c for c in columns if c not in omit]
-        all_granules_all_zero_cols = { c: 0 for c in columns }
+        all_granules_all_zero_cols = {c: 0 for c in columns}
         for _, file in self.file_pairs:
             if self.verbosity >= 2:
                 print(f"Testing beam fields for {file.name}")
@@ -330,7 +424,7 @@ class TestGranule(unittest.TestCase):
             for col in dat.columns:
                 self.assertFalse(
                     dat[col].isnull().all(),
-                    f"Column {col} of {file.name} is all null."
+                    f"Column {col} of {file.name} is all null.",
                 )
                 if is_numeric_dtype(dat[col]):
                     if (dat[col] == 0).all():
@@ -338,7 +432,7 @@ class TestGranule(unittest.TestCase):
         for col, count in all_granules_all_zero_cols.items():
             if count == len(self.file_pairs):
                 print(f"\nWARNING: column {col} is all zero in all granules.")
-        
+
     def test_no_extra_beam_fields(self):
         print("\nWARNING: Currently ignoring degrade_flag")
         ignore = ["degrade_flag", "geolocation/degrade_flag"]
@@ -366,8 +460,8 @@ class TestGranule(unittest.TestCase):
                             # This is a top-level group with no subcolumns
                             continue
                         self.assertSetEqual(
-                            set(f[k][grp].keys()), # actual
-                            set(grp_columns_dict[grp]), # documentation
+                            set(f[k][grp].keys()),  # actual
+                            set(grp_columns_dict[grp]),  # documentation
                             f"Columns in group {grp} of {k} in {file.name} do not match expected columns",
                         )
     

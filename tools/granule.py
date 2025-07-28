@@ -55,6 +55,8 @@ class Granule(h5py.File):
         Iterate over the ancillary data in the granule and extract data.
         """
         ancillary_data = {}
+        if "ANCILLARY" not in self:
+            return ancillary_data
         for key in self["ANCILLARY"]:
             d = self["ANCILLARY"][key]
             if isinstance(d, h5py.Dataset):

@@ -364,7 +364,7 @@ class TestGranule(unittest.TestCase):
                 len(set(g.ancillary["model_data"]["predict_stratum"])), 35
             )
             self.assertSetEqual(
-                grps,
+                set(grps),
                 set(g.ancillary.keys()),
                 f"Ancillary groups in {file.name} do not match expected groups",
             )

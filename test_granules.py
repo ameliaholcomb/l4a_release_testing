@@ -157,10 +157,6 @@ class TestGranule(unittest.TestCase):
             )
 
     def test_agbd_quality_flags(self):
-        print(
-            "\nWARNING: In test_agbd_quality_flags,"
-            " omitting shots with predict_stratum = None"
-        )
         for _, file in self.file_pairs:
             qflag = (
                 "l4_quality_flag"
@@ -177,23 +173,15 @@ class TestGranule(unittest.TestCase):
 
             # Check if agbd is not -9999 where quality flags are 1
             valid_mask = granule.data[qflag] == 1
-            if "V003" in file.name:
-                valid_mask = np.logical_and(
-                    valid_mask, granule.data["predict_stratum"] != b"None"
-                )
             self.assertTrue(
                 np.all(granule.data["agbd"][valid_mask] != -9999),
                 f"AGBD is -9999 where quality flag is 1 in V3 for {file.name}",
             )
 
     def test_same_predict_strata(self):
-        omit = ["O19336_04", "O19337_04"]
-        print(f"\nWARNING: In test_same_predict_strata, omitting orbits {omit}")
         max_n = 0
         max_fpair = None
         for v2file, v3file in self.file_pairs:
-            if any([s in v2file.name for s in omit]):
-                continue
             columns = ["shot_number", "predict_stratum"]
             v2g = Granule(v2file, columns)
             v3g = Granule(v3file, columns)
@@ -344,22 +332,6 @@ class TestGranule(unittest.TestCase):
     def test_all_beam_attributes(self):
         beam_attrs = DATA_DICTIONARY_DIR / "product_dictionary_beam_attrs.txt"
         columns = _get_columns(beam_attrs)
-        add = [
-            "elev_outlier_zscore_min",
-            "elev_outlier_tile_buffer",
-            "elev_outlier_zq",
-            "elev_outlier_zscore_t",
-            "elev_outlier_ncells",
-            "elev_outlier_tile_res",
-            "elev_outlier_zdiff",
-            "elev_outlier_tile_size",
-        ]
-        print(
-            "\nWARNING: In test_all_beam_attributes,"
-            " adding the following columns:"
-        )
-        print(add)
-        columns.extend(add)
         for _, file in self.file_pairs:
             f = h5py.File(file, "r")
             for k in f.keys():
@@ -373,7 +345,6 @@ class TestGranule(unittest.TestCase):
                             " do not match expected columns"
                         ),
                     )
-
 
     def test_no_extra_beam_fields(self):
         beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
@@ -415,7 +386,7 @@ class TestGranule(unittest.TestCase):
                 isnull = (data == np.finfo(data.dtype).max).all()
                 isnull |= (data == -9999.0).all()
                 return isnull
-        
+
         def _is_all_null_str(data):
             if (data == "").all():
                 return True
@@ -426,17 +397,9 @@ class TestGranule(unittest.TestCase):
             else:
                 return False
 
-        print(
-            "\nWARNING: In test_all_beam_fields,"
-            " currently ignoring the following fields:"
-        )
-        ignore = [
-            "land_cover_data/pft_class",
-        ]
-        print(ignore)
         beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
         columns = _get_columns(beam_data)
-        columns = [c for c in columns if c not in ignore]
+        columns = [c for c in columns]
         all_null_cols = defaultdict(int)
         all_zero_cols = defaultdict(int)
         for _, file in self.file_pairs:
@@ -461,8 +424,7 @@ class TestGranule(unittest.TestCase):
                                 all_zero_cols[col] += 1
                         else:
                             raise TypeError(
-                                "Unexpected type in column"
-                                f" {col}: {s.dtype.kind}"
+                                f"Unknown type in {col}: {s.dtype.kind}"
                             )
                     elif type(s) is bytes:
                         if _is_all_null_str(g.data[col].str.decode("utf-8")):
@@ -471,46 +433,14 @@ class TestGranule(unittest.TestCase):
                         if _is_all_null_str(g.data[col]):
                             all_null_cols[col] += 1
                     else:
-                        raise TypeError(
-                            "Unexpected type in column"
-                            f" {col}: {type(s)}"
-                        )
+                        raise TypeError(f"Unknown type in {col}: {type(s)}")
 
-        for col, count in all_null_cols.items():
-            warn_only = [
-                "predictor_limit_flag",
-                "response_limit_flag",
-                "agbd_prediction/predictor_limit_flag_a1",
-                "agbd_prediction/predictor_limit_flag_a2",
-                "agbd_prediction/predictor_limit_flag_a5",
-                "agbd_prediction/predictor_limit_flag_a10",
-                "agbd_prediction/response_limit_flag_a1",
-                "agbd_prediction/response_limit_flag_a2",
-                "agbd_prediction/response_limit_flag_a5",
-                "agbd_prediction/response_limit_flag_a10",
-            ]
-            if col in warn_only and count == len(self.file_pairs):
-                print(f"WARNING: Column {col} is all null in all granules.")
-                continue
-            self.assertNotEqual(
-                count,
-                len(self.file_pairs),
-                f"Column {col} is all null in all granules.",
-            )
-        for col, count in all_zero_cols.items():
-            warn_only = [
-                "agbd_prediction/selected_mode_flag_a1",
-                "agbd_prediction/selected_mode_flag_a5",
-            ]
-            if col in warn_only:
-                print(f"WARNING: Column {col} is all zero in all granules.")
-                continue
-            self.assertNotEqual(
-                count,
-                len(self.file_pairs),
-                f"Column {col} is all zero in all granules.",
-            )
-
+        k_files = len(self.file_pairs)
+        bad = [col for col, n in all_null_cols.items() if n == k_files]
+        self.assertListEqual(bad, [], "\nColumns are null across all granules")
+        bad = [col for col, n in all_zero_cols.items() if n == k_files]
+        if len(bad) > 0:
+            print(f"WARNING: Columns are zero across all granules:\n{bad}")
 
     def test_binary_flags_binary_values(self):
         binary_flags = [

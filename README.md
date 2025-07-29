@@ -23,6 +23,8 @@ $ python -m unittest test_granules.TestGranule.[name_of_test]
 Set verbosity to level 1, 2, or 3 by adding `-v` flags, e.g. `-vvv` for maximum debug information printed. 
 Except when debugging an individual test failure, it is recommended to set verbosity to level 1 only (or omit the flag) in order to make sure that important warnings are not missed.
 
+On branch `known-issues`, all known issues are printed as warnings instead of test failures.
+This may be useful for debugging and writing new tests.
 
 Some tests are more qualitative. 
 `examine_granules.ipynb` contains graphs of the data and may be a useful starting point.

@@ -31,7 +31,7 @@ shot_number
 solar_elevation
 surface_flag
 xvar
-geolocation/degrade_flag
+degrade_flag
 geolocation/shot_number
 geolocation/stale_return_flag
 agbd_prediction/shot_number

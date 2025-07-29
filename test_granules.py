@@ -1,8 +1,6 @@
 import h5py
 from collections import defaultdict
 import numpy as np
-import pandas as pd
-from pandas.api.types import is_numeric_dtype
 import pathlib
 import random
 import sys
@@ -378,15 +376,9 @@ class TestGranule(unittest.TestCase):
 
 
     def test_no_extra_beam_fields(self):
-        print(
-            "\nWARNING: In test_no_extra_beam_fields,"
-            " currently ignoring the following fields:"
-        )
-        ignore = ["degrade_flag", "geolocation/degrade_flag"]
-        print(ignore)
         beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
         columns = _get_columns(beam_data)
-        columns = [c for c in columns if c not in ignore]
+        columns = [c for c in columns]
         grp_columns_dict = _get_grps_columns_dict(columns)
         grps = grp_columns_dict.keys()
         columns = [col.split("/") for col in columns]
@@ -396,8 +388,6 @@ class TestGranule(unittest.TestCase):
             for k in f.keys():
                 if k.startswith("BEAM"):
                     beam_grps = set(f[k].keys())
-                    for ig in ignore:
-                        beam_grps.discard(ig)
                     self.assertSetEqual(
                         beam_grps,  # actual
                         set(grps),  # documentation
@@ -441,7 +431,6 @@ class TestGranule(unittest.TestCase):
             " currently ignoring the following fields:"
         )
         ignore = [
-            "geolocation/degrade_flag",
             "land_cover_data/pft_class",
         ]
         print(ignore)

@@ -9,6 +9,7 @@ from typing import Dict, List
 
 from tools.granule import Granule
 from tools.granule_name import parse_granule_filename
+from tools.null_checker import check_null, check_zero
 
 LOCALFILES_DIR = pathlib.Path(
     "/Users/amelia/Repos/testdata/gedi_l4a_test_granules"
@@ -325,7 +326,7 @@ class TestGranule(unittest.TestCase):
                 )
                 for col in g.ancillary[grp].columns:
                     self.assertFalse(
-                        g.ancillary[grp][col].isnull().any(),
+                        check_null(g.ancillary[grp][col]),
                         f"ANCILLARY/{grp}/{col} of {file.name} has null values",
                     )
 
@@ -378,25 +379,6 @@ class TestGranule(unittest.TestCase):
                         )
 
     def test_all_beam_fields(self):
-        def _is_all_null_numeric(data):
-            kind = data.dtype.kind
-            if kind in "iu":  # integer or unsigned integer
-                return (data == np.iinfo(data.dtype).max).all()
-            if kind in "f":  # float
-                isnull = (data == np.finfo(data.dtype).max).all()
-                isnull |= (data == -9999.0).all()
-                return isnull
-
-        def _is_all_null_str(data):
-            if (data == "").all():
-                return True
-            if (data == "None").all():
-                return True
-            if (data == "NaN").all():
-                return True
-            else:
-                return False
-
         beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
         columns = _get_columns(beam_data)
         columns = [c for c in columns]
@@ -407,40 +389,14 @@ class TestGranule(unittest.TestCase):
                 print(f"Testing non-null data for {file.name}")
             g = Granule(file, columns=columns)
             for col in g.data.columns:
-                kind = g.data[col].dtype.kind
-                if kind in "iuf":
-                    if _is_all_null_numeric(g.data[col]):
-                        all_null_cols[col] += 1
-                    if (g.data[col] == 0).all():
-                        all_zero_cols[col] += 1
-                if kind in "O":  # object
-                    s = g.data[col].values[0]
-                    if type(s) is np.ndarray:
-                        if s.dtype.kind in "iuf":
-                            dat = np.array(g.data[col].to_list())
-                            if _is_all_null_numeric(dat):
-                                all_null_cols[col] += 1
-                            if (dat == 0).all():
-                                all_zero_cols[col] += 1
-                        else:
-                            raise TypeError(
-                                f"Unknown type in {col}: {s.dtype.kind}"
-                            )
-                    elif type(s) is bytes:
-                        if _is_all_null_str(g.data[col].str.decode("utf-8")):
-                            all_null_cols[col] += 1
-                    elif type(s) is str:
-                        if _is_all_null_str(g.data[col]):
-                            all_null_cols[col] += 1
-                    else:
-                        raise TypeError(f"Unknown type in {col}: {type(s)}")
-
+                all_null_cols[col] += check_null(g.data[col])
+                all_zero_cols[col] += check_zero(g.data[col])
         k_files = len(self.file_pairs)
-        bad = [col for col, n in all_null_cols.items() if n == k_files]
-        self.assertListEqual(bad, [], "\nColumns are null across all granules")
         bad = [col for col, n in all_zero_cols.items() if n == k_files]
         if len(bad) > 0:
             print(f"WARNING: Columns are zero across all granules:\n{bad}")
+        bad = [col for col, n in all_null_cols.items() if n == k_files]
+        self.assertListEqual(bad, [], "\nColumns are null across all granules")
 
     def test_binary_flags_binary_values(self):
         binary_flags = [

@@ -27,27 +27,24 @@ DATA_DICTIONARY_DIR = TESTDIR / "data_dictionaries"
 
 def _get_files_umd():
     v3files = list(V3FILES_DIR.iterdir())
-    v3md = [parse_granule_filename(f.name) for f in v3files]
-    v2f = [
-        list(
-            V2FILES_DIR.glob(
-                f"GEDI04_A*{md.orbit}_{md.sub_orbit_granule}*_V002.h5"
-            )
-        )
-        for md in v3md
-    ]
-    v2files = []
-    for f in v2f:
-        if len(f) == 2:
-            if f[0] > f[1]:
-                v2files.append(f[0])
-            else:
-                v2files.append(f[1])
-        elif len(f) == 1:
-            v2files.append(f[0])
-        else:
-            print("Error: unexpected number of files found\n", f)
+    v2files = [_get_v2_file_umd(f) for f in v3files]
     return list(zip(v2files, v3files))
+
+
+def _get_v2_file_umd(v3file: pathlib.Path):
+    md = parse_granule_filename(v3file.name)
+    v2f = list(
+        V2FILES_DIR.glob(f"GEDI04_A*{md.orbit}_{md.sub_orbit_granule}*_V002.h5")
+    )
+    if len(v2f) == 2:
+        if v2f[0] > v2f[1]:
+            return v2f[0]
+        else:
+            return v2f[1]
+    elif len(v2f) == 1:
+        return v2f[0]
+    else:
+        print("Error: unexpected number of files found\n", v2f)
 
 
 def _get_l2a_file_umd(v3file: pathlib.Path):
@@ -56,7 +53,7 @@ def _get_l2a_file_umd(v3file: pathlib.Path):
         V2FILES_DIR.glob(f"GEDI02_A*{md.orbit}_{md.sub_orbit_granule}*_V003.h5")
     )
     if len(l2afile) != 1:
-        raise (
+        raise FileNotFoundError(
             f"Expected exactly one L2A file for {v3file.name}, found {len(l2afile)}"
         )
     return l2afile[0]
@@ -103,7 +100,10 @@ class TestGranule(unittest.TestCase):
             file_pairs = _get_files_umd()
 
         # Get verbosity level (default to 1 if not available)
-        cls.verbosity = getattr(sys.modules[__name__], "_verbosity", 2)
+        if sys.argv and len(sys.argv) > 2 and "-v" in sys.argv[2]:
+            cls.verbosity = sys.argv[2].count("v") - 1
+        else:
+            cls.verbosity = 1
         print(f"Verbosity level: {cls.verbosity}")
 
         # Pick a random subset of file pairs for testing
@@ -125,11 +125,11 @@ class TestGranule(unittest.TestCase):
 
             self.assertTrue(
                 v3_shots.issubset(v2_shots),
-                f"Not all V3 shots are present in V2 for {v2file.name} and {v3file.name}",
+                f"Some V3 shots are not in V2 for {v2file.name}, {v3file.name}",
             )
             self.assertTrue(
                 v2_shots.issubset(v3_shots),
-                f"Not all V2 shots are present in V3 for {v2file.name} and {v3file.name}",
+                f"Some V2 shots are not in V3 for {v2file.name}, {v3file.name}",
             )
 
     def test_biomass_pi(self):
@@ -159,7 +159,10 @@ class TestGranule(unittest.TestCase):
             )
 
     def test_agbd_quality_flags(self):
-        print("\nWARNING: Currently omitting predict_stratum = None")
+        print(
+            "\nWARNING: In test_agbd_quality_flags,"
+            " omitting shots with predict_stratum = None"
+        )
         for _, file in self.file_pairs:
             qflag = (
                 "l4_quality_flag"
@@ -185,10 +188,9 @@ class TestGranule(unittest.TestCase):
                 f"AGBD is -9999 where quality flag is 1 in V3 for {file.name}",
             )
 
-
     def test_same_predict_strata(self):
         omit = ["O19336_04", "O19337_04"]
-        print(f"\nWARNING: Currently omitting orbits {omit}")
+        print(f"\nWARNING: In test_same_predict_strata, omitting orbits {omit}")
         max_n = 0
         max_fpair = None
         for v2file, v3file in self.file_pairs:
@@ -271,7 +273,10 @@ class TestGranule(unittest.TestCase):
             print(get_98_only_models(g.ancillary))
 
         ### TEST STARTS HERE ###
-        print("WARNING: Currently accepting leaf_off_flag = 255 as valid")
+        print(
+            "WARNING: In test_quality_flag_logic,"
+            " accepting leaf_off_flag = 255 as valid"
+        )
         for _, v3file in self.file_pairs:
             if self.verbosity >= 2:
                 print(f"Testing quality flag logic for {v3file.name}")
@@ -286,17 +291,12 @@ class TestGranule(unittest.TestCase):
             qf_v3 = g.data["l4a_quality_flag_rel3"] == 1
 
             diff = myqf != qf_v3
+            if self.verbosity >= 2 and diff.any():
+                print("Saving quality flag issues to quality_flag_issues.csv")
+                g.data[diff].to_csv("quality_flag_issues.csv", index=False)
             self.assertFalse(
                 diff.any(), f"Quality flag logic mismatch in {v3file.name}."
             )
-            # if self.verbosity >= 2:
-            #     print(
-            #         "MyQF (L4A) vs V3 QF:\n",
-            #         g.data[diff][["shot_number", "predict_stratum"]],
-            #     )
-            #     g.data[diff].to_csv(
-            #         "quality_flag_mismatch.csv", index=False
-            #     )
 
     def test_all_metadata_fields(self):
         md = DATA_DICTIONARY_DIR / "product_dictionary_metadata.txt"
@@ -335,12 +335,12 @@ class TestGranule(unittest.TestCase):
                 self.assertSetEqual(
                     set(g.ancillary[grp].columns),
                     set(grp_columns_dict[grp]),
-                    f"Columns in group {grp} of {file.name} do not match expected columns",
+                    f"Columns in ANCILLARY/{grp} in {file.name} don't match expected columns",
                 )
                 for col in g.ancillary[grp].columns:
                     self.assertFalse(
                         g.ancillary[grp][col].isnull().any(),
-                        f"Column {col} in group {grp} of {file.name} contains null values",
+                        f"ANCILLARY/{grp}/{col} of {file.name} has null values",
                     )
 
     def test_all_beam_attributes(self):
@@ -356,7 +356,10 @@ class TestGranule(unittest.TestCase):
             "elev_outlier_zdiff",
             "elev_outlier_tile_size",
         ]
-        print("\nWARNING: Currently adding the following columns:")
+        print(
+            "\nWARNING: In test_all_beam_attributes,"
+            " adding the following columns:"
+        )
         print(add)
         columns.extend(add)
         for _, file in self.file_pairs:
@@ -367,32 +370,18 @@ class TestGranule(unittest.TestCase):
                     self.assertSetEqual(
                         set(attrs),
                         set(columns),
-                        f"Attributes for {k} in {file.name} do not match expected columns",
+                        (
+                            f"Attributes for {k}/agbd_prediction in {file.name}"
+                            " do not match expected columns"
+                        ),
                     )
 
-    def test_all_beam_fields(self):
-        omit = ["geolocation/degrade_flag", "land_cover_data/pft_class"]
-        print("\nWARNING: Currently omitting the following fields:")
-        print(omit)
-        beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
-        columns = _get_columns(beam_data)
-        columns = [c for c in columns if c not in omit]
-        all_zero_cols = defaultdict(int)
-        for _, file in self.file_pairs:
-            if self.verbosity >= 2:
-                print(f"Testing beam fields for {file.name}")
-            g = Granule(file, columns=columns)
-            dat = g.data
-            for col in dat.columns:
-                if is_numeric_dtype(dat[col]):
-                    if (dat[col] == 0).all():
-                        all_zero_cols[col] += 1
-        for col, count in all_zero_cols.items():
-            if count == len(self.file_pairs):
-                print(f"\nWARNING: column {col} is all zero in all granules.")
 
     def test_no_extra_beam_fields(self):
-        print("\nWARNING: Currently ignoring the following fields:")
+        print(
+            "\nWARNING: In test_no_extra_beam_fields,"
+            " currently ignoring the following fields:"
+        )
         ignore = ["degrade_flag", "geolocation/degrade_flag"]
         print(ignore)
         beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
@@ -412,7 +401,7 @@ class TestGranule(unittest.TestCase):
                     self.assertSetEqual(
                         beam_grps,  # actual
                         set(grps),  # documentation
-                        f"Groups in {k} of {file.name} do not match expected groups",
+                        f"Groups in {k} of {file.name} do not match expected",
                     )
                     for grp in beam_grps:
                         if not grp_columns_dict[grp]:
@@ -421,13 +410,37 @@ class TestGranule(unittest.TestCase):
                         self.assertSetEqual(
                             set(f[k][grp].keys()),  # actual
                             set(grp_columns_dict[grp]),  # documentation
-                            f"Columns in group {grp} of {k} in {file.name} do not match expected columns",
+                            (
+                                f"Columns in {k}/{grp} of {file.name}"
+                                " do not match expected"
+                            ),
                         )
 
-    def test_non_null_data(self):
-        print("\nWARNING: Currently ignoring the following fields:")
+    def test_all_beam_fields(self):
+        def _is_all_null_numeric(data):
+            kind = data.dtype.kind
+            if kind in "iu":  # integer or unsigned integer
+                return (data == np.iinfo(data.dtype).max).all()
+            if kind in "f":  # float
+                isnull = (data == np.finfo(data.dtype).max).all()
+                isnull |= (data == -9999.0).all()
+                return isnull
+        
+        def _is_all_null_str(data):
+            if (data == "").all():
+                return True
+            if (data == "None").all():
+                return True
+            if (data == "NaN").all():
+                return True
+            else:
+                return False
+
+        print(
+            "\nWARNING: In test_all_beam_fields,"
+            " currently ignoring the following fields:"
+        )
         ignore = [
-            "degrade_flag",
             "geolocation/degrade_flag",
             "land_cover_data/pft_class",
         ]
@@ -436,26 +449,79 @@ class TestGranule(unittest.TestCase):
         columns = _get_columns(beam_data)
         columns = [c for c in columns if c not in ignore]
         all_null_cols = defaultdict(int)
+        all_zero_cols = defaultdict(int)
         for _, file in self.file_pairs:
             if self.verbosity >= 2:
                 print(f"Testing non-null data for {file.name}")
             g = Granule(file, columns=columns)
             for col in g.data.columns:
                 kind = g.data[col].dtype.kind
-                if kind in "iu":
-                    if (g.data[col] == np.iinfo(g.data[col].dtype).max).all():
+                if kind in "iuf":
+                    if _is_all_null_numeric(g.data[col]):
                         all_null_cols[col] += 1
-                if kind in "f":
-                    if (g.data[col] == np.finfo(g.data[col].dtype).max).all():
-                        all_null_cols[col] += 1
-                if kind in "S":
-                    if (g.data[col] == b"").all():
-                        all_null_cols[col] += 1
-                    if (g.data[col] == b"None").all():
-                        all_null_cols[col] += 1
+                    if (g.data[col] == 0).all():
+                        all_zero_cols[col] += 1
+                if kind in "O":  # object
+                    s = g.data[col].values[0]
+                    if type(s) is np.ndarray:
+                        if s.dtype.kind in "iuf":
+                            dat = np.array(g.data[col].to_list())
+                            if _is_all_null_numeric(dat):
+                                all_null_cols[col] += 1
+                            if (dat == 0).all():
+                                all_zero_cols[col] += 1
+                        else:
+                            raise TypeError(
+                                "Unexpected type in column"
+                                f" {col}: {s.dtype.kind}"
+                            )
+                    elif type(s) is bytes:
+                        if _is_all_null_str(g.data[col].str.decode("utf-8")):
+                            all_null_cols[col] += 1
+                    elif type(s) is str:
+                        if _is_all_null_str(g.data[col]):
+                            all_null_cols[col] += 1
+                    else:
+                        raise TypeError(
+                            "Unexpected type in column"
+                            f" {col}: {type(s)}"
+                        )
+
         for col, count in all_null_cols.items():
-            if count == len(self.file_pairs):
-                print(f"\nWARNING: column {col} is all null in all granules. ")
+            warn_only = [
+                "predictor_limit_flag",
+                "response_limit_flag",
+                "agbd_prediction/predictor_limit_flag_a1",
+                "agbd_prediction/predictor_limit_flag_a2",
+                "agbd_prediction/predictor_limit_flag_a5",
+                "agbd_prediction/predictor_limit_flag_a10",
+                "agbd_prediction/response_limit_flag_a1",
+                "agbd_prediction/response_limit_flag_a2",
+                "agbd_prediction/response_limit_flag_a5",
+                "agbd_prediction/response_limit_flag_a10",
+            ]
+            if col in warn_only and count == len(self.file_pairs):
+                print(f"WARNING: Column {col} is all null in all granules.")
+                continue
+            self.assertNotEqual(
+                count,
+                len(self.file_pairs),
+                f"Column {col} is all null in all granules.",
+            )
+        for col, count in all_zero_cols.items():
+            warn_only = [
+                "agbd_prediction/selected_mode_flag_a1",
+                "agbd_prediction/selected_mode_flag_a5",
+            ]
+            if col in warn_only:
+                print(f"WARNING: Column {col} is all zero in all granules.")
+                continue
+            self.assertNotEqual(
+                count,
+                len(self.file_pairs),
+                f"Column {col} is all zero in all granules.",
+            )
+
 
     def test_binary_flags_binary_values(self):
         binary_flags = [
@@ -480,7 +546,7 @@ class TestGranule(unittest.TestCase):
                 file,
                 columns=binary_flags
                 + binary_nullable_flags
-                + zeroonetwo_nullable_flags
+                + zeroonetwo_nullable_flags,
             )
             for col in binary_flags:
                 self.assertTrue(

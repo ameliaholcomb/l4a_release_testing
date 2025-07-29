@@ -21,19 +21,19 @@ class Granule(h5py.File):
             # TODO: Ideally, get all columns if none are specified
             raise NotImplementedError
         if "shot_number" not in columns:
-            columns.append("shot_number")
+            columns = columns + ["shot_number"]
         if quality_filter:
             if file_path.name.endswith("V002.h5"):
                 if "l4_quality_flag" not in columns:
-                    columns.append("l4_quality_flag")
+                    columns = columns + ["l4_quality_flag"]
             elif file_path.name.endswith("V003.h5"):
                 if "l4a_quality_flag_rel3" not in columns:
-                    columns.append("l4a_quality_flag_rel3")
+                    columns = columns + ["l4a_quality_flag_rel3"]
                 # Currently working around a bug in the V003 files where
                 # the predict_stratum is sometimes not present but quality flag
                 # is True.
                 if "predict_stratum" not in columns:
-                    columns.append("predict_stratum")
+                    columns = columns + ["predict_stratum"]
 
         self.columns = columns
         self.data = self.iter_beams()

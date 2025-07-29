@@ -185,42 +185,6 @@ class TestGranule(unittest.TestCase):
                 f"AGBD is -9999 where quality flag is 1 in V3 for {file.name}",
             )
 
-    def test_agbd_mean_diff(self):
-        # I don't think this test is very meaningful.
-        big_diffs = []
-        for v2file, v3file in self.file_pairs:
-            columns = ["shot_number", "agbd"]
-            v2_granule = Granule(
-                v2file, columns=columns.append("l4_quality_flag")
-            )
-            v3_granule = Granule(
-                v3file, columns=columns.append("l4a_quality_flag_rel3")
-            )
-
-            # print mean difference in AGBD between v2 and v3
-            v2_agbd = v2_granule.data["agbd"]
-            v3_agbd = v3_granule.data["agbd"]
-            valid = np.logical_and(v3_agbd != -9999, v2_agbd != -9999)
-            mean_diff = np.mean(v3_agbd[valid] - v2_agbd[valid])
-
-            if np.abs(mean_diff) > 5:
-                print(
-                    f"Mean(V3_agbd - V2_agbd) for {v3file.name} and {v2file.name} is {mean_diff:.2f}"
-                )
-                big_diffs.append((v2file.name, v3file.name, mean_diff))
-
-        df = pd.DataFrame(
-            big_diffs,
-            columns=["v2file", "v3file", "mean_diff"],
-        )
-        # sort by mean diff
-        df = df.sort_values(by="mean_diff", ascending=False).to_csv(
-            "big_diffs.csv", index=False
-        )
-
-        big_diffs = sorted(big_diffs, key=lambda x: np.abs(x[2]), reverse=True)
-        for diff in big_diffs[:5]:
-            print(diff)
 
     def test_same_predict_strata(self):
         omit = ["O19336_04", "O19337_04"]

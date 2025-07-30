@@ -15,7 +15,7 @@ LOCALFILES_DIR = pathlib.Path(
     "/Users/amelia/Repos/testdata/gedi_l4a_test_granules"
 )
 V3FILES_DIR = pathlib.Path(
-    "/gpfs/data1/vclgp/armstonj/gedi_l4a_processing/gedi_l4a_r003_test"
+    "/gpfs/data1/vclgp/armstonj/gedi_l4a_processing/r003"
 )
 V2FILES_DIR = pathlib.Path("/gpfs/data1/vclgp/data/iss_gedi/soc/2022/132")
 
@@ -68,7 +68,13 @@ def _get_columns(file_path: pathlib.Path):
     columns = []
     with open(file_path, "r") as f:
         for line in f:
-            columns.append(line.strip())
+            line = line.strip()
+            if line.endswith("_aN"):
+                columns.extend(
+                    [line.replace("_aN", f"_a{i}") for i in [1, 2, 5, 10]]
+                )
+            else:
+                columns.append(line)
     return columns
 
 
@@ -182,33 +188,34 @@ class TestGranule(unittest.TestCase):
     def test_same_predict_strata(self):
         max_n = 0
         max_fpair = None
+        THRESHOLD = 0.004  # 0.4% of footprints
         for v2file, v3file in self.file_pairs:
             columns = ["shot_number", "predict_stratum"]
             v2g = Granule(v2file, columns)
             v3g = Granule(v3file, columns)
-            invalid = np.logical_and(
-                v2g.data["predict_stratum"] == b"",
-                v3g.data["predict_stratum"] == b"None",
-            )
             # print differences in predict_stratum
-            v2ps = v2g.data["predict_stratum"][~invalid]
-            v3ps = v3g.data["predict_stratum"][~invalid]
+            v2ps = v2g.data["predict_stratum"]
+            v3ps = v3g.data["predict_stratum"]
             if not np.array_equal(v2ps, v3ps):
                 diffs = v2ps != v3ps
                 v2p = v2ps[diffs]
-                v3p = v3ps[diffs]
                 n_diff = len(v2p)
                 if n_diff > max_n:
                     max_n = n_diff
                     max_fpair = (v2file.name, v3file.name)
                 n_tot = len(v2ps)
-                if self.verbosity >= 2:
+                if self.verbosity >= 2 and (n_diff / n_tot) > THRESHOLD:
                     print(f"Differences: {n_diff / n_tot}")
-                self.assertLess(n_diff / n_tot, 0.004)
-
-                if self.verbosity >= 2:
-                    pairs = set(zip(v2p, v3p))
-                    print(pairs)
+                    v3p = v3ps[diffs]
+                    pairs = list(zip(v2p, v3p))
+                    for u in set(pairs):
+                        print(f"{u[0]} -> {u[1]}: {pairs.count(u)} times")
+                self.assertLess(
+                    n_diff / n_tot,
+                    THRESHOLD,
+                    f"{n_diff / n_tot * 100:.2f}% of footprints differ in "
+                    f"predict_stratum between {v2file.name} and {v3file.name}",
+                )
         if self.verbosity >= 2:
             print(
                 (
@@ -242,10 +249,9 @@ class TestGranule(unittest.TestCase):
                 & (granule.data["land_cover_data/urban_proportion"] < 50)
                 & (granule.data["land_cover_data/worldcover_class"] != 0)
                 & (granule.data["land_cover_data/worldcover_class"] != 80)
-                & (granule.data["predict_stratum"] != b"None")
+                & (granule.data["predict_stratum"] != b"")
                 & (
                     (granule.data["land_cover_data/leaf_off_flag"] == 0)
-                    | (granule.data["land_cover_data/leaf_off_flag"] == 255)
                     | (is_98_only)
                 )
             )
@@ -260,10 +266,6 @@ class TestGranule(unittest.TestCase):
             print(get_98_only_models(g.ancillary))
 
         ### TEST STARTS HERE ###
-        print(
-            "WARNING: In test_quality_flag_logic,"
-            " accepting leaf_off_flag = 255 as valid"
-        )
         for _, v3file in self.file_pairs:
             if self.verbosity >= 2:
                 print(f"Testing quality flag logic for {v3file.name}")
@@ -410,7 +412,6 @@ class TestGranule(unittest.TestCase):
             "land_cover_data/leaf_off_flag",
         ]
         zeroonetwo_nullable_flags = [
-            "land_cover_data/leaf_on_cycle",
             "predictor_limit_flag",
             "response_limit_flag",
         ]

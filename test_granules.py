@@ -48,14 +48,11 @@ def _get_v2_file_umd(v3file: pathlib.Path):
 
 def _get_l2a_file_umd(v3file: pathlib.Path):
     md = parse_granule_filename(v3file.name)
-    l2afile = list(
+    l2afiles = list(
         V2FILES_DIR.glob(f"GEDI02_A*{md.orbit}_{md.sub_orbit_granule}*_V003.h5")
     )
-    if len(l2afile) != 1:
-        raise FileNotFoundError(
-            f"Expected exactly one L2A file for {v3file.name}, found {len(l2afile)}"
-        )
-    return l2afile[0]
+    l2afiles = sorted(l2afiles, reverse=True)
+    return l2afiles[0]
 
 
 def _get_files_local():
@@ -165,21 +162,14 @@ class TestGranule(unittest.TestCase):
 
     def test_agbd_quality_flags(self):
         for _, file in self.file_pairs:
-            qflag = (
-                "l4_quality_flag"
-                if "V002" in file.name
-                else "l4a_quality_flag_rel3"
-            )
             columns = [
                 "shot_number",
                 "agbd",
-                "predict_stratum",
-                qflag,
+                "l4a_quality_flag_rel3",
             ]
             granule = Granule(file, columns=columns)
-
             # Check if agbd is not -9999 where quality flags are 1
-            valid_mask = granule.data[qflag] == 1
+            valid_mask = granule.data["l4a_quality_flag_rel3"] == 1
             self.assertTrue(
                 np.all(granule.data["agbd"][valid_mask] != -9999),
                 f"AGBD is -9999 where quality flag is 1 in V3 for {file.name}",
@@ -274,9 +264,7 @@ class TestGranule(unittest.TestCase):
             g = Granule(v3file, columns=qf_columns)
             g_l2a = Granule(l2a_file, columns=["rh"])
 
-            myqfl4a_set = myqf_l4a(g)
-            myqfl2a_set = myqf_l2a(g_l2a)
-            myqf = myqfl4a_set & myqfl2a_set
+            myqf = myqf_l4a(g) & myqf_l2a(g_l2a)
             qf_v3 = g.data["l4a_quality_flag_rel3"] == 1
 
             diff = myqf != qf_v3
@@ -290,11 +278,27 @@ class TestGranule(unittest.TestCase):
     def test_all_metadata_fields(self):
         md = DATA_DICTIONARY_DIR / "product_dictionary_metadata.txt"
         columns = _get_columns(md)
+        grps_columns_dict = _get_grps_columns_dict(columns)
+        grps = grps_columns_dict.keys()
         for _, file in self.file_pairs:
+            print(file)
             f = h5py.File(file, "r")
-            for col in columns:
-                if col not in f.keys():
-                    self.fail(f"Column {col} not found in {file.name}")
+            self.assertSetEqual(set(f.attrs.keys()), set(["short_name"]))
+            metadata = f["METADATA"]
+            for grp in grps:
+                if grp not in metadata.keys():
+                    self.fail(f"Group {grp} not found in {file.name}")
+                for att in grps_columns_dict[grp]:
+                    if att not in metadata[grp].attrs.keys():
+                        self.fail(
+                            f"Attribute {att} not found in group {grp} of {file.name}"
+                        )
+                    self.assertIsNotNone(metadata[grp].attrs[att])
+            self.assertSetEqual(
+                set(grps),
+                set(metadata.keys()),
+                f"Metadata groups in {file.name} do not match expected groups",
+            )
 
     def test_all_ancillary_fields(self):
         ancillary = DATA_DICTIONARY_DIR / "product_dictionary_ancillary.txt"
@@ -352,7 +356,6 @@ class TestGranule(unittest.TestCase):
     def test_no_extra_beam_fields(self):
         beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
         columns = _get_columns(beam_data)
-        columns = [c for c in columns]
         grp_columns_dict = _get_grps_columns_dict(columns)
         grps = grp_columns_dict.keys()
         columns = [col.split("/") for col in columns]
@@ -383,7 +386,6 @@ class TestGranule(unittest.TestCase):
     def test_all_beam_fields(self):
         beam_data = DATA_DICTIONARY_DIR / "product_dictionary_beam_data.txt"
         columns = _get_columns(beam_data)
-        columns = [c for c in columns]
         all_null_cols = defaultdict(int)
         all_zero_cols = defaultdict(int)
         for _, file in self.file_pairs:
